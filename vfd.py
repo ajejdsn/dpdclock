@@ -1,18 +1,21 @@
-    
-    ##################################################
-    # DPDCLOCK V1.0     github.com/ajejdsn/dpd-201   #
-    # rawrr~~ >v<                                    #
-    #                                                #
-    ##################################################
-
-
 import asyncio
+import sys
 import time
 import psutil
 import serial
-import winrt.windows.media.control as wmc
+import serial.tools.list_ports
 
-PORT = "COM5"
+if not sys.platform.startswith("win32") or sys.platform.startswith("win64"):
+    print(sys.platform);
+    print("ERR:WINDOWS ONLY\n")
+    sys.exit(1)
+
+try:
+    import winrt.windows.media.control as wmc
+    HAS_WINRT = True
+except ImportError:
+    HAS_WINRT = False
+
 BAUD_RATE = 9600
 
 cmd_sot = b"\x02"
@@ -25,7 +28,7 @@ map_vis = {
 }
 
 map_tr = {
-    'Б': 'B', 'б': 'b', 'В': 'B', 'в': 'v', 'т': 't', 'т': 't', 'Г': 'G', 'Н': 'H', 'н': 'n', 'г': 'g', 'Д': 'D', 'д': 'd', 'Ё': 'Yo', 'ё': 'yo',
+    'Б': 'B', 'б': 'b', 'В': 'B', 'в': 'v', 'т': 't', 'Г': 'G', 'Н': 'H', 'н': 'n', 'г': 'g', 'Д': 'D', 'д': 'd', 'Ё': 'Yo', 'ё': 'yo',
     'Ж': 'Zh', 'ж': 'zh', 'З': 'Z', 'з': 'z', 'И': 'I', 'и': 'i', 'Й': 'Y', 'й': 'y',
     'Л': 'L', 'л': 'l', 'П': 'P', 'п': 'p', 'Ф': 'F', 'ф': 'f', 'Ц': 'Ts', 'ц': 'ts',
     'Ч': 'Ch', 'ч': 'ch', 'Ш': 'Sh', 'ш': 'sh', 'Щ': 'Sch', 'щ': 'sch', 'Ъ': '', 'ъ': '',
@@ -33,10 +36,27 @@ map_tr = {
     'Я': 'Ya', 'я': 'ya'
 }
 
-
 l_title = ""
 l_rawp = 0.0
 l_updt = 0.0
+
+def f_port() -> str:
+    targettts = [
+        (0x10C4, 0xEA60),
+        (0x1A86, 0x7523)
+    ]
+    
+    ports = serial.tools.list_ports.comports()
+    for port in ports:
+        if port.vid is not None and port.pid is not None:
+            for vid, pid in targettts:
+                if port.vid == vid and port.pid == pid:
+                    return port.device
+                    
+                    
+    return "COM5"
+    print("ERR: PORT NOT FOUND\nUSING DEFAULT\n")
+    
 
 def d_transl(text: str) -> str:
     result = []
@@ -58,6 +78,8 @@ def d_timeto12(seconds: float) -> str:
 
 async def d_getmus():
     global l_title, l_rawp, l_updt
+    if not HAS_WINRT:
+        return None
     try:
         manager = await wmc.GlobalSystemMediaTransportControlsSessionManager.request_async()
         session = manager.get_current_session()
@@ -81,7 +103,6 @@ async def d_getmus():
                 l_title = currtitle
                 l_rawp = raw_pos
                 l_updt = now
-                    # is this thing works? i guess. but please, if it's not its not reason to fuck me >.<
             if isply:
                 live_pos = l_rawp + (now - l_updt)
             else:
@@ -91,7 +112,7 @@ async def d_getmus():
             if end > 0 and live_pos > end:
                 live_pos = end
 
-            return { # used ai here, pls dont touch me -.-
+            return {
                 "artist": info.artist or "Unknown",
                 "title": currtitle,
                 "isply": isply,
@@ -102,45 +123,38 @@ async def d_getmus():
     except Exception:
         pass
     return None
-
+    
 c_lsp = ""
 
 def t_sendf(ser, line1: str, line2: str):
     global c_lsp
-    
     l1 = line1.ljust(20)[:20]
     l2 = line2.ljust(20)[:20]
     full_text = l1 + l2
-
     if full_text == c_lsp:
         return
-
     c_lsp = full_text
-
     rawbyte = full_text.encode("cp1251", errors="replace")
     b_clean = bytes([b if 32 <= b <= 255 else 63 for b in rawbyte])
-
     packet = cmd_sot + b_clean + cmd_eot
     ser.write(packet)
 
 async def main():
+    port = f_port()
     try:
-        ser = serial.Serial(PORT, BAUD_RATE, timeout=1)
+        ser = serial.Serial(port, BAUD_RATE, timeout=1)
         time.sleep(2)
-        print(f"DPDCLOCK")
-        print(f"VER:1.0") # not the 1.0
-        print(f"[+] Started on: {PORT}")
-
+        print("DPDCLOCK\n")
+        print("PLATFORM: " + sys.platform)
+        print("VER:2.0\n")
+        print(f"START ON: {port}\n")
         scroll_pos = 0
-
         while True:
             media = await d_getmus()
-
             if media and (media["isply"] or media["ispaus"]):
                 artist = d_transl(media["artist"])
                 title = d_transl(media["title"])
                 tr_str = f"{artist} - {title}"
-
                 if len(tr_str) > 20:
                     padded_str = tr_str + "   "
                     line1 = (padded_str + padded_str)[scroll_pos : scroll_pos + 20]
@@ -149,36 +163,28 @@ async def main():
                 else:
                     line1 = tr_str
                     scroll_pos = 0
-
                 status_part = "PLAY" if media["isply"] else "PAUS"
-
                 pos_str = d_timeto12(media["position"])
                 dur_str = d_timeto12(media["duration"])
                 left_part = f"{pos_str}/{dur_str}"
-
                 spaces = 20 - len(left_part) - len(status_part)
                 line2 = left_part + (" " * spaces) + status_part
-
                 t_sendf(ser, line1, line2)
                 await asyncio.sleep(0.4)
 
             else:
                 scroll_pos = 0
-
                 line1 = time.strftime("%Y %b %d | %I:%M%p").upper()
-                
                 cpu_usage = int(psutil.cpu_percent(interval=None))
                 cpu_str = f"CPU:{cpu_usage}%"
                 day_str = time.strftime("%a").upper()
-                
                 spaces = 20 - len(cpu_str) - len(day_str)
                 line2 = cpu_str + (" " * spaces) + day_str
-
                 t_sendf(ser, line1, line2)
                 await asyncio.sleep(0.5)
 
     except serial.SerialException as e:
-        print(f"[-] Error!\nVerbose: {e}")
+        print(f"ERROR!\nVerbose: {e}")
     except KeyboardInterrupt:
         print("\nBye-bye...")
     finally:
@@ -187,4 +193,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-    
