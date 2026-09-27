@@ -1,0 +1,3 @@
+psutil
+pyserial
+winrt-Windows.Media.Control
