@@ -1,3 +1,3 @@
-psutil
-pyserial
+psutil>=5.9.0
+pyserial>=3.5
 winrt-Windows.Media.Control
